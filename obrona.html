@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Obrona — session-guard | Przemysław Niemiec</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="progress" id="progress"></div>
+  <div class="slide-counter" id="counter">1 / 12</div>
+  <div class="nav-hint">← → spacja · F pełny ekran</div>
+
+  <div class="deck" id="deck">
+
+    <!-- 1. Tytuł -->
+    <section class="slide slide-title-page active" data-slide="1">
+      <div class="title-layout">
+        <div class="title-content">
+          <p class="title-type">Praca dyplomowa inżynierska</p>
+          <h1 class="title-main">Wykrywanie i zapobieganie atakom typu Session Fixation i Session Hijacking</h1>
+          <p class="title-sub">Detection and Prevention of Session Fixation and Session Hijacking Attacks</p>
+          <div class="title-divider" aria-hidden="true"></div>
+          <div class="title-meta">
+            <div><strong>Przemysław Niemiec</strong> · nr albumu: 42001</div>
+            <div>Promotor: <strong>dr hab. inż. Imed El Fray, prof. ZUT</strong></div>
+            <div>Katedra Inżynierii Oprogramowania i Cyberbezpieczeństwa</div>
+            <div>Zachodniopomorski Uniwersytet Technologiczny w Szczecinie · 2026</div>
+          </div>
+        </div>
+        <aside class="title-logo-aside" aria-hidden="true">
+          <img src="assets/ZUT_1.png" alt="Logo ZUT">
+        </aside>
+      </div>
+    </section>
+
+    <!-- 2. Problem -->
+    <section class="slide" data-slide="2">
+      <header class="slide-header"><h2 class="slide-title">Problem</h2></header>
+      <div class="slide-body slide-with-logo">
+        <div class="slide-content">
+          <ul class="bullet-list">
+            <li>Po logowaniu tożsamość użytkownika = <strong>identyfikator sesji (SID)</strong> dołączany do każdego żądania HTTP.</li>
+            <li><strong>Session fixation</strong> — narzucenie ofierze znanego SID przed uwierzytelnieniem; po logowaniu atakujący przejmuje sesję.</li>
+            <li><strong>Session hijacking</strong> — przejęcie ważnej sesji (XSS, replay cookie, bruteforce, równoległe użycie tokenu).</li>
+            <li>Temat aktualny: <strong>OWASP Top 10 A07</strong> — Authentication Failures (CWE-384, CWE-613).</li>
+          </ul>
+        </div>
+        <aside class="slide-logo-aside" aria-hidden="true">
+          <img src="assets/ZUT_1.png" alt="">
+        </aside>
+      </div>
+    </section>
+
+    <!-- 3. Stan wiedzy -->
+    <section class="slide" data-slide="3">
+      <header class="slide-header"><h2 class="slide-title">Stan wiedzy — luka badawcza</h2></header>
+      <div class="slide-body slide-with-logo">
+        <div class="slide-content">
+          <ul class="bullet-list">
+            <li><strong>Prewencja</strong> (SessionShield, RFC, <code>__Host-</code>): utrudnia kradzież tokenu, lecz nie wykrywa nadużycia po jego przejęciu.</li>
+            <li><strong>Detekcja</strong> (SHPF, UEBA): obserwuje zachowanie sesji, ale opiera się na pojedynczych regułach lub wymaga infrastruktury SIEM/SOC.</li>
+            <li>Audyty 2020–2025 (OWASP, CVE): luki <em>session fixation</em> i <em>hijacking</em> nadal powszechne w praktyce.</li>
+            <li><strong>Brakuje:</strong> lekkiego middleware serwerowego z agregacją wielu detektorów i powtarzalną ewaluacją (macierz ataków + FPR + narzut).</li>
+          </ul>
+        </div>
+        <aside class="slide-logo-aside" aria-hidden="true">
+          <img src="assets/ZUT_1.png" alt="">
+        </aside>
+      </div>
+    </section>
+
+    <!-- 4. Cel i teza -->
+    <section class="slide" data-slide="4">
+      <header class="slide-header"><h2 class="slide-title">Cel, teza i pytania badawcze</h2></header>
+      <div class="slide-body">
+        <ul class="bullet-list compact">
+          <li><strong>Cel:</strong> zaprojektować, zaimplementować i eksperymentalnie zweryfikować middleware wykrywające ataki na sesję.</li>
+          <li><strong>Rozwiązanie:</strong> pakiet <code>session-guard</code> dla PHP ≥ 8.3 — 11 detektorów + silnik scoringu.</li>
+          <li><strong>Teza:</strong> detekcja behawioralna istotnie zwiększa skuteczność względem samego hardeningu — bez fałszywych alarmów i przy akceptowalnym narzucie.</li>
+        </ul>
+        <div class="research-grid">
+          <div class="research-box">
+            <h3>P1</h3>
+            <p>Skuteczność wykrywania i blokowania ataków vs sam hardening</p>
+          </div>
+          <div class="research-box">
+            <h3>P2</h3>
+            <p>Odsetek fałszywych alarmów (FPR) na legalnym ruchu</p>
+          </div>
+          <div class="research-box">
+            <h3>P3</h3>
+            <p>Narzut czasowy middleware na żądanie HTTP</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 5. Luka -->
+    <section class="slide" data-slide="5">
+      <header class="slide-header"><h2 class="slide-title">Luka, którą adresuje rozwiązanie</h2></header>
+      <div class="slide-body slide-with-logo">
+        <div class="slide-content">
+          <ul class="bullet-list">
+            <li>Hardening (<code>HttpOnly</code>, <code>Secure</code>, <code>SameSite</code>, <code>__Host-</code>, strict mode, regeneracja SID) jest <strong>konieczny, lecz niewystarczający</strong>.</li>
+            <li>Gdy atakujący posiada ważny SID i poprawnie go używa — serwer <strong>nie odróżnia</strong> go od prawowitego właściciela.</li>
+            <li>Potrzebna jest obserwacja <strong>zachowania sesji w czasie</strong> i reakcja na wykryte anomalie.</li>
+          </ul>
+        </div>
+        <aside class="slide-logo-aside" aria-hidden="true">
+          <img src="assets/ZUT_1.png" alt="">
+        </aside>
+      </div>
+    </section>
+
+    <!-- 6. Architektura -->
+    <section class="slide" data-slide="6">
+      <header class="slide-header"><h2 class="slide-title">Architektura rozwiązania</h2></header>
+      <div class="slide-body two-col">
+        <div class="flow-wrap">
+          <svg class="flow-svg" viewBox="0 0 640 200" xmlns="http://www.w3.org/2000/svg" aria-label="Przepływ session-guard">
+            <defs>
+              <marker id="arrowhead" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+                <polygon points="0 0, 8 3, 0 6" fill="#0066b3"/>
+              </marker>
+            </defs>
+            <rect class="flow-node" x="10" y="72" width="110" height="44" rx="8"/>
+            <text class="flow-text" x="65" y="98" text-anchor="middle">Żądanie HTTP</text>
+
+            <rect class="flow-node" x="152" y="72" width="96" height="44" rx="8"/>
+            <text class="flow-text" x="200" y="98" text-anchor="middle">11 detektorów</text>
+
+            <rect class="flow-node" x="280" y="72" width="88" height="44" rx="8"/>
+            <text class="flow-text" x="324" y="98" text-anchor="middle">ScoreEngine</text>
+
+            <rect class="flow-node" x="400" y="72" width="72" height="44" rx="8"/>
+            <text class="flow-text" x="436" y="98" text-anchor="middle">Progi</text>
+
+            <rect class="flow-node-action" x="512" y="24" width="110" height="36" rx="8"/>
+            <text class="flow-text" x="567" y="47" text-anchor="middle">Logger</text>
+            <rect class="flow-node-action" x="512" y="82" width="110" height="36" rx="8"/>
+            <text class="flow-text" x="567" y="105" text-anchor="middle">Re-auth</text>
+            <rect class="flow-node-action" x="512" y="140" width="110" height="36" rx="8"/>
+            <text class="flow-text" x="567" y="163" text-anchor="middle">Destroy</text>
+
+            <line class="flow-arrow" x1="120" y1="94" x2="152" y2="94"/>
+            <line class="flow-arrow" x1="248" y1="94" x2="280" y2="94"/>
+            <line class="flow-arrow" x1="368" y1="94" x2="400" y2="94"/>
+            <line class="flow-arrow" x1="472" y1="82" x2="512" y2="42"/>
+            <line class="flow-arrow" x1="472" y1="94" x2="512" y2="100"/>
+            <line class="flow-arrow" x1="472" y1="106" x2="512" y2="158"/>
+          </svg>
+        </div>
+        <ul class="bullet-list compact">
+          <li>Middleware analizuje każde żądanie chronionej sesji i podejmuje akcję wg progu ryzyka.</li>
+          <li>Środowisko Docker: <strong>Apache</strong> → <code>app.local</code> (podatna) / <code>secure.local</code> (z middleware) → <strong>MySQL</strong>.</li>
+          <li>Oba warianty aplikacji dzielą <strong>ten sam kod</strong> — różni je wyłącznie mechanizm sesji.</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- 7. Detektory -->
+    <section class="slide" data-slide="7">
+      <header class="slide-header"><h2 class="slide-title">session-guard — detektory i scoring</h2></header>
+      <div class="slide-body">
+        <div class="detector-grid">
+          <div class="detector-box">
+            <h3>6 pasywnych</h3>
+            <p>ip_change · user_agent · fingerprint · session_id_entropy · cookie_flags · client_hints</p>
+          </div>
+          <div class="detector-box">
+            <h3>5 stanowych</h3>
+            <p>regeneration_policy · idle_absolute_timeout · concurrent_session · impossible_travel · request_rate</p>
+          </div>
+        </div>
+        <div class="scoring-bar">
+          <strong>ScoreEngine</strong> sumuje wagi sygnałów → progi: <strong>30</strong> (STEP_UP) / <strong>70</strong> (BLOCK).
+          Akcje: logowanie, alert admina, ponowne uwierzytelnienie, zniszczenie sesji.
+          Wagi i progi konfigurowalne w <code>guard.php</code> — detekcja oddzielona od reakcji.
+        </div>
+      </div>
+    </section>
+
+    <!-- 8. Środowisko -->
+    <section class="slide" data-slide="8">
+      <header class="slide-header"><h2 class="slide-title">Środowisko badawcze</h2></header>
+      <div class="slide-body slide-with-logo">
+        <div class="slide-content">
+          <ul class="bullet-list">
+            <li><strong>Docker Compose:</strong> aplikacja podatna (<code>app.local</code>) i zabezpieczona (<code>secure.local</code>).</li>
+            <li>Ten sam kod aplikacji — różni je wyłącznie mechanizm sesji (<code>GUARD_ENABLED</code>).</li>
+            <li><strong>Kontener atakujący:</strong> 8 zautomatyzowanych scenariuszy (fixation URL/subdomain/header, XSS replay, bruteforce SID, concurrent abuse, impossible travel, hijack replay).</li>
+            <li>Panel administracyjny + pipeline <code>make research</code> — pełna reprodukowalność wyników.</li>
+          </ul>
+        </div>
+        <aside class="slide-logo-aside" aria-hidden="true">
+          <img src="assets/ZUT_1.png" alt="">
+        </aside>
+      </div>
+    </section>
+
+    <!-- 9. Metodyka -->
+    <section class="slide" data-slide="9">
+      <header class="slide-header"><h2 class="slide-title">Metodyka eksperymentów</h2></header>
+      <div class="slide-body">
+        <div class="research-grid">
+          <div class="research-box">
+            <h3>P1 — skuteczność</h3>
+            <p>4 profile obronne × 8 ataków × 3 powt. = <strong>96 przebiegów</strong></p>
+          </div>
+          <div class="research-box">
+            <h3>P2 — fałszywe alarmy</h3>
+            <p>4 scenariusze legalnego ruchu × 5 powt. → pomiar FPR</p>
+          </div>
+          <div class="research-box">
+            <h3>P3 — narzut</h3>
+            <p>Ten sam kod bez i z middleware · 1000 iter./scenariusz</p>
+          </div>
+        </div>
+        <div class="scoring-bar">
+          <strong>Uzupełnienie P1:</strong> analiza ablacyjna — wyłączanie pojedynczych detektorów z profilu <code>full_middleware</code>.
+          Całość reprodukowalna komendą <code>make research</code>.
+        </div>
+      </div>
+    </section>
+
+    <!-- 10. Wyniki P1 -->
+    <section class="slide" data-slide="10">
+      <header class="slide-header"><h2 class="slide-title">Wyniki — skuteczność detekcji (P1)</h2></header>
+      <div class="slide-body two-col">
+        <div class="chart-card">
+          <p class="chart-title">True Positive Rate (TPR) wg profilu obronnego</p>
+          <div class="bar-chart" id="tpr-chart">
+            <div class="bar-group">
+              <span class="bar-value">0%</span>
+              <div class="bar dim" style="height: 4%"></div>
+              <span class="bar-label">none</span>
+            </div>
+            <div class="bar-group">
+              <span class="bar-value">62,5%</span>
+              <div class="bar" style="height: 62.5%"></div>
+              <span class="bar-label">cookie_flags</span>
+            </div>
+            <div class="bar-group">
+              <span class="bar-value">62,5%</span>
+              <div class="bar" style="height: 62.5%"></div>
+              <span class="bar-label">id_regeneration</span>
+            </div>
+            <div class="bar-group">
+              <span class="bar-value">100%</span>
+              <div class="bar full" style="height: 100%"></div>
+              <span class="bar-label">full</span>
+            </div>
+          </div>
+        </div>
+        <div>
+          <div class="stat-grid">
+            <div class="stat-card">
+              <div class="stat-value">0%</div>
+              <div class="stat-label">aplikacja podatna</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-value">62,5%</div>
+              <div class="stat-label">sam hardening</div>
+            </div>
+            <div class="stat-card highlight">
+              <div class="stat-value">100%</div>
+              <div class="stat-label">pełne middleware</div>
+            </div>
+          </div>
+          <p style="margin: 0 0 0.5rem; font-size: 0.95rem; color: var(--muted);">Hardening nie blokuje:</p>
+          <div class="tag-list">
+            <span class="tag">concurrent_abuse</span>
+            <span class="tag">impossible_travel</span>
+            <span class="tag">session_hijack_replay</span>
+          </div>
+          <p style="margin: 1rem 0 0.5rem; font-size: 0.95rem; color: var(--muted);">Pełne session-guard:</p>
+          <div class="tag-list">
+            <span class="tag ok">wszystkie 8 ataków zablokowane</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 11. Wyniki P2+P3 -->
+    <section class="slide" data-slide="11">
+      <header class="slide-header"><h2 class="slide-title">Wyniki — koszt detekcji (P2 + P3)</h2></header>
+      <div class="slide-body slide-with-logo">
+        <div class="slide-content">
+          <ul class="bullet-list">
+            <li><strong>FPR = 0%</strong> na scenariuszach: <code>happy_path</code>, <code>tab_reload</code>, <code>mobile_to_wifi</code>, <code>browser_minor_update</code>.</li>
+            <li><strong>Narzut wydajnościowy:</strong> addytywnie kilka ms na żądanie (kilkanaście ms na sesję użytkownika).</li>
+            <li>Narzut względny przy uwierzytelnianiu: <strong>11–28%</strong> — praktycznie niezauważalny dla użytkownika.</li>
+            <li><strong>Analiza ablacyjna:</strong> wyłączenie dowolnego pojedynczego detektora nie obniża TPR — redundancja sygnałów (obrona w głąb).</li>
+          </ul>
+        </div>
+        <aside class="slide-logo-aside" aria-hidden="true">
+          <img src="assets/ZUT_1.png" alt="">
+        </aside>
+      </div>
+    </section>
+
+    <!-- 12. Podsumowanie -->
+    <section class="slide slide-closing" data-slide="12">
+      <header class="slide-header"><h2 class="slide-title">Podsumowanie</h2></header>
+      <div class="slide-body slide-with-logo">
+        <div class="slide-content">
+          <ul class="bullet-list">
+            <li><strong>Teza potwierdzona:</strong> middleware <code>session-guard</code> uzupełnia hardening tam, gdzie same atrybuty cookie i regeneracja SID okazują się niewystarczające.</li>
+            <li><strong>Wkład:</strong> gotowy pakiet + powtarzalne środowisko badawcze (Docker, testy, CI).</li>
+            <li><strong>Dalszy rozwój:</strong> więcej scenariuszy ataków, detektory ML, OpenTelemetry, dystrybucja Composer.</li>
+          </ul>
+          <p class="closing-thanks">Dziękuję za uwagę — chętnie odpowiem na pytania.</p>
+        </div>
+        <aside class="slide-logo-aside" aria-hidden="true">
+          <img src="assets/ZUT_1.png" alt="">
+        </aside>
+      </div>
+    </section>
+
+  </div>
+
+  <script src="slides.js"></script>
+</body>
+</html>
